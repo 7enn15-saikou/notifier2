@@ -57,7 +57,8 @@ HEADERS = {
 
 UNKNOWN_EVENT = "(演目名不明)"
 PRICE_RE = re.compile(r"[\d,]+\s*円")
-DATE_RE = re.compile(r"(\d{4})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})\s*\(([^)]*)\)")
+# 曜日の括弧は、半角・全角のどちらでも読み、曜日が別の行に分かれていても読めるようにする
+DATE_RE = re.compile(r"(\d{4})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})\s*(?:[（(]\s*([^）)\s]*)\s*[）)])?")
 START_RE = re.compile(r"(\d{1,2}:\d{2})\s*開演")
 # 「(2026/11/15(日))」「(東京都・2026/11/15(日))」のような、末尾の括弧書きの日付
 DATE_TAIL_RE = re.compile(r"\s*[（(][^（(]*\d{4}\s*/\s*\d{1,2}\s*/\s*\d{1,2}.*$")
@@ -101,6 +102,7 @@ def clean_event_name(raw: str) -> str:
     name = re.sub(r"^\s*チケットぴあ\s*[-－|｜]\s*", "", name)
     name = re.sub(r"\s*[-－|｜]\s*チケットぴあ.*$", "", name)
     name = re.split(r"\s+[|｜]\s+", name)[0]  # 「演目名 | 受付の名前」の、前半だけ
+    name = re.sub(r"\s*(当日引換券|一般発売)\s*$", "", name)  # 末尾の受付の名前
     name = DATE_TAIL_RE.sub("", name)
     name = BARE_DATE_RE.sub("", name)
     name = ANGLE_DATE_RE.sub("", name)
@@ -118,16 +120,19 @@ def parse_event_name(html: str) -> str:
 
 def find_performance(lines: list[str], i: int) -> str | None:
     """lines[i] が公演の見出し（日付の行）なら「11/28(土) 12:00」の形で返す。
-    開演時刻は、同じ行か、直後の2行から探す（例: 12:00 開演 ( 11:00 開場 )）。"""
-    m = DATE_RE.match(lines[i])
-    if not m:
+    日付・曜日・開演時刻が別々の行に分かれていても、直後の数行をまとめて読む。"""
+    if not DATE_RE.match(lines[i]):
         return None
-    label = f"{int(m.group(2))}/{int(m.group(3))}({m.group(4)})"
-    start = START_RE.search(" ".join(lines[i : i + 3]))
+    joined = " ".join(lines[i : i + 4])
+    m = DATE_RE.match(joined)
+    label = f"{int(m.group(2))}/{int(m.group(3))}"
+    if m.group(4):
+        label += f"({m.group(4)})"
+    start = START_RE.search(joined)
     if start:
         return f"{label} {start.group(1)}"
     # 時刻が読めないときは、日付だけの行（他の文が付いていない行）に限って採用する
-    return label if DATE_RE.fullmatch(lines[i]) else None
+    return label if len(lines[i]) <= 16 else None
 
 
 def find_status(lines: list[str], i: int) -> str | None:
@@ -172,6 +177,8 @@ def parse_ticket_details(html: str) -> dict[str, tuple[str, str | None, str]]:
         if not re.search(r"[^\d,\s円]", name) and i > 0:  # 価格しかない行は、前の行を券種名にする
             name = f"{lines[i - 1]} {name}".strip()
         base = f"{performance or '-'}｜{name}"
+        if performance and base in details:
+            continue  # 同じ公演・同じ券種が、ページ内に2回載っている場合は1件にまとめる
         key, n = base, 2
         while key in details:  # 同じ名前が並んだときの衝突回避
             key, n = f"{base} #{n}", n + 1
