@@ -1,0 +1,3 @@
+# 監視したいチケットぴあのページのURLを、1行に1つずつ書きます。
+# 「#」で始まる行と空行は無視されます。
+https://t.pia.jp/pia/ticketInformation.do?eventCd=2628218&rlsCd=004&lotRlsCd=
